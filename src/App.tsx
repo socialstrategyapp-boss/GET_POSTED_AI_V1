@@ -10,6 +10,7 @@ import Studio from '@/pages/Studio'
 import Gallery from '@/pages/Gallery'
 import Profile from '@/pages/Profile'
 import Schedule from '@/pages/Schedule'
+import Audit from '@/pages/Audit'
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/gallery" element={<Gallery />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/schedule" element={<Schedule />} />
+        <Route path="/audit" element={<Audit />} />
       </Routes>
       <ToastContainer />
       <CoPilot />

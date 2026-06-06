@@ -1,11 +1,11 @@
 // GET POSTED AI — API Client
-// Supports: OpenAI (ChatGPT), Google Gemini, LibreChat (multi-provider)
+// Supports: OpenAI (ChatGPT), Google Gemini, Moonshot AI, LibreChat (multi-provider)
 
 import { supabase } from './supabase'
 
 const API_BASE = '/api'
 
-type AiProvider = 'openai' | 'gemini' | 'libre'
+type AiProvider = 'openai' | 'gemini' | 'moonshot' | 'libre'
 
 // ─── AI Chat ───
 
@@ -18,12 +18,10 @@ export async function sendAiMessage(
 ): Promise<{ reply: string; provider: string }> {
   try {
     // Try Supabase Edge Function first (real AI)
-    const { data, error } = await supabase.functions.invoke(
-      provider === 'gemini' ? 'gemini-chat' : provider === 'libre' ? 'libre-chat' : 'ai-chat',
-      {
-        body: { message, businessName, industry, websiteUrl, provider },
-      }
-    )
+    const fnName = provider === 'gemini' ? 'gemini-chat' : provider === 'moonshot' ? 'moonshot-chat' : provider === 'libre' ? 'libre-chat' : 'ai-chat'
+    const { data, error } = await supabase.functions.invoke(fnName, {
+      body: { message, businessName, industry, websiteUrl, provider },
+    })
 
     if (error) throw error
     return { reply: data.reply, provider: data.provider || provider }

@@ -25,6 +25,7 @@ export default function Navbar() {
     ? [
         { label: 'Studio', path: '/studio' },
         { label: 'Gallery', path: '/gallery' },
+        { label: 'Audit', path: '/audit' },
         { label: 'Brand', path: '/profile' },
       ]
     : []
