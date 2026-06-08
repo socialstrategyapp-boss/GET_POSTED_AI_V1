@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router'
 import WelcomeTour from '@/components/WelcomeTour'
+import MediaCreator from '@/components/studio/MediaCreator'
 import { supabase } from '@/lib/supabase'
 import { startTopup, openBillingPortal } from '@/hooks/useCheckout'
 
@@ -411,6 +412,14 @@ export default function Studio() {
                     <p style={{ color: '#555', fontSize: 11, margin: 0, lineHeight: 1.4 }}>{idea.desc}</p>
                   </motion.button>
                 ))}
+              </div>
+
+              {/* ── AI Media Generator — Video / Image / Voice ── */}
+              <div style={{ marginTop: 28 }}>
+                <p style={{ color: '#555', fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
+                  ✨ AI Media Lab — Powered by RunPod GPU
+                </p>
+                <MediaCreator businessName={bizName} industry={profile.industry} />
               </div>
             </motion.div>
           )}
