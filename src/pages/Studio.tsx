@@ -419,7 +419,7 @@ export default function Studio() {
                 <p style={{ color: '#555', fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, marginBottom: 14 }}>
                   ✨ AI Media Lab — Powered by RunPod GPU
                 </p>
-                <MediaCreator businessName={bizName} industry={profile.industry} />
+                <MediaCreator />
               </div>
             </motion.div>
           )}
