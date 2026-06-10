@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { sendAiMessage } from '@/lib/api'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -19,6 +20,8 @@ function getIntelligence() {
 function getStudioSession() {
   try { return JSON.parse(localStorage.getItem('gp_studio_session') || '{}') } catch { return {} }
 }
+
+/* profile context is now built inside sendAiMessage in api.ts */
 
 export default function CoPilot() {
   const [open, setOpen] = useState(false)
@@ -70,22 +73,21 @@ export default function CoPilot() {
 
     try {
       const profile = getProfile()
-      const intelligence = getIntelligence()
-      const studioSession = getStudioSession()
-      const res = await fetch('/api/copilot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...messages, userMsg].slice(-12),
-          profile,
-          intelligence,
-          studioSession, // Co-pilot knows exactly what's being built in Studio
-        })
-      })
-      const data = await res.json()
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply || 'Try again in a moment.' }])
+      const biz = (profile.businessName || profile.business_name || '') as string
+      const industry = (profile.industry || '') as string
+      const website = (profile.website || profile.website_url || profile.websiteUrl || '') as string
+
+      // Call GPT-4o directly with full business context
+      const { reply } = await sendAiMessage(text, biz, industry, website, 'openai')
+      setMessages(prev => [...prev, { role: 'assistant', content: reply || 'Try again in a moment.' }])
     } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection issue — try again.' }])
+      // Fallback: try with empty context
+      try {
+        const { reply } = await sendAiMessage(text, '', '', '', 'openai')
+        setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+      } catch {
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Connection issue — try again.' }])
+      }
     } finally {
       setLoading(false)
     }

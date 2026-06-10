@@ -99,9 +99,11 @@ function BrandTab() {
   const [form, setForm] = useState({
     business_name: '',
     industry: '',
+    website_url: '',
     brand_voice: '',
     custom_brand_voice: '',
     brand_description: '',
+    about_business: '',
     brand_color_primary: '#ff0099',
     brand_color_secondary: '#00ccff',
     social_instagram: '',
@@ -116,18 +118,21 @@ function BrandTab() {
 
   useEffect(() => {
     if (profile) {
+      const p = profile as Record<string, string>
       setForm({
-        business_name: profile.business_name || '',
-        industry: profile.industry || '',
-        brand_voice: profile.brand_voice || '',
-        custom_brand_voice: profile.custom_brand_voice || '',
-        brand_description: profile.brand_description || '',
-        brand_color_primary: profile.brand_color_primary || '#ff0099',
-        brand_color_secondary: profile.brand_color_secondary || '#00ccff',
-        social_instagram: profile.social_instagram || '',
-        social_tiktok: profile.social_tiktok || '',
-        social_youtube: profile.social_youtube || '',
-        social_twitter: profile.social_twitter || '',
+        business_name: p.business_name || '',
+        industry: p.industry || '',
+        website_url: p.website_url || p.website || '',
+        brand_voice: p.brand_voice || '',
+        custom_brand_voice: p.custom_brand_voice || '',
+        brand_description: p.brand_description || '',
+        about_business: p.about_business || '',
+        brand_color_primary: p.brand_color_primary || '#ff0099',
+        brand_color_secondary: p.brand_color_secondary || '#00ccff',
+        social_instagram: p.social_instagram || '',
+        social_tiktok: p.social_tiktok || '',
+        social_youtube: p.social_youtube || '',
+        social_twitter: p.social_twitter || '',
       })
       setIsDirty(false)
     }
@@ -194,6 +199,24 @@ function BrandTab() {
               placeholder="Your business name"
               className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
             />
+          </div>
+
+          <div>
+            <label className="block text-[13px] font-medium text-[#cccccc] mb-1.5">
+              Website URL <span className="text-[#555]">(optional)</span>
+            </label>
+            <div className="relative">
+              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
+              <Input
+                value={form.website_url}
+                onChange={(e) => updateField('website_url', e.target.value)}
+                placeholder="https://yourbusiness.com"
+                className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+              />
+            </div>
+            <p className="text-[11px] text-[#555] mt-1">
+              We use this to understand your business and tailor content
+            </p>
           </div>
 
           <div className="relative" ref={industryRef}>
@@ -293,18 +316,22 @@ function BrandTab() {
 
           <div>
             <label className="block text-[13px] font-medium text-[#cccccc] mb-1.5">
-              Brand Description{' '}
-              <span className="text-[#555]">(optional)</span>
+              About Your Business{' '}
+              <span className="text-[#ff0099]">GPT uses this for every response</span>
             </label>
             <Textarea
-              value={form.brand_description}
-              onChange={(e) =>
+              value={form.about_business || form.brand_description}
+              onChange={(e) => {
+                updateField('about_business', e.target.value)
                 updateField('brand_description', e.target.value)
-              }
-              placeholder="Tell us more about what your brand does..."
-              rows={4}
+              }}
+              placeholder="Tell us who you are, what your business does, who your customers are, and what you're trying to achieve on social media. The more detail, the better GPT can tailor your content."
+              rows={6}
               className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
             />
+            <p className="text-[11px] text-[#555] mt-1">
+              Example: "We're a family-run bakery in Melbourne specialising in vegan donuts. Our customers are 18-35 health-conscious millennials. We want to grow our Instagram to drive foot traffic."
+            </p>
           </div>
 
           <div>

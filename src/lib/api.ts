@@ -16,6 +16,14 @@ export async function sendAiMessage(
   websiteUrl?: string | null,
   provider: AiProvider = 'openai'
 ): Promise<{ reply: string; provider: string }> {
+  // Read full profile from localStorage for rich context
+  const profile = JSON.parse(localStorage.getItem('gp_profile') || '{}')
+  const aboutBiz = (profile.about_business || profile.brand_description || '') as string
+  const brandVoice = (profile.brand_voice || profile.custom_brand_voice || '') as string
+  const profileWebsite = websiteUrl || (profile.website_url || profile.website || '') as string
+  const profileBiz = businessName || (profile.businessName || profile.business_name || '') as string
+  const profileIndustry = industry || (profile.industry || '') as string
+
   // Try OpenAI directly first (reads key from env or localStorage)
   if (provider === 'openai') {
     try {
@@ -27,11 +35,13 @@ export async function sendAiMessage(
       ].filter((k): k is string => !!k)
 
       let systemPrompt = `You are GET POSTED AI, an expert social media content strategist and viral video creator.`
-      if (businessName) {
-        systemPrompt += ` You are helping "${businessName}"${industry ? `, a business in the ${industry} industry` : ''}.`
+      if (profileBiz) {
+        systemPrompt += ` You are helping "${profileBiz}"${profileIndustry ? `, a business in the ${profileIndustry} industry` : ''}.`
       }
-      if (websiteUrl) systemPrompt += ` Their website is ${websiteUrl}.`
-      systemPrompt += `\n\nYour job is to help create amazing, viral social media content. Be creative, strategic, and actionable.\n\nWhen asked for content, provide:\n1. A hook/headline that grabs attention in the first 2 seconds\n2. A full script or post text\n3. Specific shot list or visual directions (for video)\n4. 5-10 optimized hashtags\n5. Best posting time recommendation\n6. Call-to-action suggestions\n\nKeep responses concise but packed with value. Format with emojis and clear sections.`
+      if (profileWebsite) systemPrompt += ` Their website is ${profileWebsite}.`
+      if (aboutBiz) systemPrompt += `\n\nABOUT THE BUSINESS:\n${aboutBiz}`
+      if (brandVoice) systemPrompt += `\n\nBRAND VOICE: ${brandVoice}`
+      systemPrompt += `\n\nYour job is to help create amazing, viral social media content. Be creative, strategic, and actionable.\n\nWhen asked for content, provide:\n1. A hook/headline that grabs attention in the first 2 seconds\n2. A full script or post text\n3. Specific shot list or visual directions (for video)\n4. 5-10 optimized hashtags\n5. Best posting time recommendation\n6. Call-to-action suggestions\n\nKeep responses concise but packed with value. Format with emojis and clear sections. Always reference their specific business and industry.`
 
       for (const key of keys) {
         try {
