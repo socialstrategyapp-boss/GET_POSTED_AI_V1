@@ -17,6 +17,14 @@ import {
   Sun,
   X,
   AlertTriangle,
+  Upload,
+  Camera,
+  Phone,
+  Mail,
+  MapPin,
+  Building2,
+  Tag,
+  Link,
 } from 'lucide-react'
 import { useProfile, useAuth, useContentItems } from '@/hooks/useSupabase'
 import { Button } from '@/components/ui/button'
@@ -60,6 +68,8 @@ const tabList = [
   { key: 'usage', label: 'Usage Analytics' },
 ]
 
+const PROFILE_KEY = 'gp_profile'
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -90,20 +100,34 @@ function AnimatedNumber({ value, duration = 800 }: { value: number; duration?: n
   return <>{display}</>
 }
 
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 /* ------------------------------------------------------------------ */
-/*  Brand Tab                                                          */
+/*  Brand Tab  --  Rich Profile Form                                   */
 /* ------------------------------------------------------------------ */
 
 function BrandTab() {
   const { profile, updateProfile, saving } = useProfile()
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Record<string, string>>({
     business_name: '',
-    industry: '',
+    company_name: '',
     website_url: '',
+    phone: '',
+    email: '',
+    address: '',
+    target_area: '',
+    industry: '',
     brand_voice: '',
     custom_brand_voice: '',
-    brand_description: '',
     about_business: '',
+    logo_url: '',
     brand_color_primary: '#ff0099',
     brand_color_secondary: '#00ccff',
     social_instagram: '',
@@ -111,33 +135,47 @@ function BrandTab() {
     social_youtube: '',
     social_twitter: '',
   })
-  const [isDirty, setIsDirty] = useState(false)
+  const [businessPhotos, setBusinessPhotos] = useState<string[]>([])
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
   const [showIndustryDropdown, setShowIndustryDropdown] = useState(false)
+  const [logoDragging, setLogoDragging] = useState(false)
+  const [photosDragging, setPhotosDragging] = useState(false)
   const industryRef = useRef<HTMLDivElement>(null)
+  const logoInputRef = useRef<HTMLInputElement>(null)
+  const photosInputRef = useRef<HTMLInputElement>(null)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /* Load profile data */
   useEffect(() => {
     if (profile) {
-      const p = profile as Record<string, string>
+      const p = profile as Record<string, string | string[]>
       setForm({
-        business_name: p.business_name || '',
-        industry: p.industry || '',
-        website_url: p.website_url || p.website || '',
-        brand_voice: p.brand_voice || '',
-        custom_brand_voice: p.custom_brand_voice || '',
-        brand_description: p.brand_description || '',
-        about_business: p.about_business || '',
-        brand_color_primary: p.brand_color_primary || '#ff0099',
-        brand_color_secondary: p.brand_color_secondary || '#00ccff',
-        social_instagram: p.social_instagram || '',
-        social_tiktok: p.social_tiktok || '',
-        social_youtube: p.social_youtube || '',
-        social_twitter: p.social_twitter || '',
+        business_name: (p.business_name as string) || '',
+        company_name: (p.company_name as string) || '',
+        website_url: (p.website_url as string) || (p.website as string) || '',
+        phone: (p.phone as string) || '',
+        email: (p.email as string) || '',
+        address: (p.address as string) || '',
+        target_area: (p.target_area as string) || '',
+        industry: (p.industry as string) || '',
+        brand_voice: (p.brand_voice as string) || '',
+        custom_brand_voice: (p.custom_brand_voice as string) || '',
+        about_business: (p.about_business as string) || '',
+        logo_url: (p.logo_url as string) || '',
+        brand_color_primary: (p.brand_color_primary as string) || '#ff0099',
+        brand_color_secondary: (p.brand_color_secondary as string) || '#00ccff',
+        social_instagram: (p.social_instagram as string) || '',
+        social_tiktok: (p.social_tiktok as string) || '',
+        social_youtube: (p.social_youtube as string) || '',
+        social_twitter: (p.social_twitter as string) || '',
       })
-      setIsDirty(false)
+      setBusinessPhotos(
+        Array.isArray(p.business_photos) ? p.business_photos : []
+      )
     }
   }, [profile])
 
+  /* Close industry dropdown on outside click */
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (
@@ -151,26 +189,118 @@ function BrandTab() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const updateField = useCallback((field: string, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }))
-    setIsDirty(true)
-    setSaveState('idle')
-  }, [])
+  /* Debounced auto-save to localStorage + Supabase */
+  const triggerAutoSave = useCallback(
+    (nextForm: Record<string, string>, nextPhotos: string[]) => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = setTimeout(async () => {
+        const payload = {
+          ...nextForm,
+          business_photos: nextPhotos,
+          brand_description: nextForm.about_business,
+        }
+        try {
+          localStorage.setItem(PROFILE_KEY, JSON.stringify(payload))
+        } catch {
+          /* ignore quota errors */
+        }
+        const success = await updateProfile(payload)
+        if (success) {
+          setSaveState('saved')
+          setTimeout(() => setSaveState('idle'), 2000)
+        }
+      }, 500)
+    },
+    [updateProfile]
+  )
 
-  const handleSave = async () => {
-    const success = await updateProfile(form)
-    if (success) {
-      setIsDirty(false)
-      setSaveState('saved')
-      toast.success('Brand profile saved')
-      setTimeout(() => setSaveState('idle'), 2000)
-    } else {
-      toast.error('Failed to save profile')
+  const updateField = useCallback(
+    (field: string, value: string) => {
+      setForm((prev) => {
+        const next = { ...prev, [field]: value }
+        triggerAutoSave(next, businessPhotos)
+        return next
+      })
+    },
+    [businessPhotos, triggerAutoSave]
+  )
+
+  const updatePhotos = useCallback(
+    (photos: string[]) => {
+      setBusinessPhotos(photos)
+      triggerAutoSave(form, photos)
+    },
+    [form, triggerAutoSave]
+  )
+
+  /* ---- Logo Upload ---- */
+  const handleLogoSelect = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload an image file')
+      return
+    }
+    try {
+      const base64 = await readFileAsBase64(file)
+      setForm((prev) => {
+        const next = { ...prev, logo_url: base64 }
+        triggerAutoSave(next, businessPhotos)
+        return next
+      })
+    } catch {
+      toast.error('Failed to read image')
     }
   }
 
+  const handleLogoDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setLogoDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleLogoSelect(file)
+  }
+
+  /* ---- Business Photos Upload ---- */
+  const handlePhotoSelect = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload an image file')
+      return
+    }
+    try {
+      const base64 = await readFileAsBase64(file)
+      const nextPhotos = [...businessPhotos, base64]
+      updatePhotos(nextPhotos)
+    } catch {
+      toast.error('Failed to read image')
+    }
+  }
+
+  const handlePhotosDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setPhotosDragging(false)
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      f.type.startsWith('image/')
+    )
+    files.forEach((f) => handlePhotoSelect(f))
+  }
+
+  const removePhoto = (index: number) => {
+    const next = businessPhotos.filter((_, i) => i !== index)
+    updatePhotos(next)
+  }
+
   const showCustomVoice =
-    form.brand_voice === 'Custom' || form.custom_brand_voice.length > 0
+    form.brand_voice === 'Custom' || (form.custom_brand_voice?.length ?? 0) > 0
+
+  /* Section header gradient style */
+  const sectionHeaderStyle: React.CSSProperties = {
+    fontFamily: "'Bangers', cursive",
+    fontSize: '16px',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase' as const,
+    background: 'linear-gradient(90deg, #ff0099, #00ccff)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+    backgroundClip: 'text',
+  }
 
   return (
     <motion.div
@@ -178,59 +308,168 @@ function BrandTab() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       transition={{ duration: 0.3 }}
-      className="space-y-6"
+      style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}
     >
-      <div className="rounded-xl border border-[rgba(255,255,255,0.08)] bg-[#0a0a0a] p-6 md:p-8">
-        <div className="flex items-center gap-2 mb-6">
-          <Sparkles className="size-[18px] text-[#ff0099]" />
-          <h3 className="font-['Bangers'] text-lg tracking-wide uppercase text-white">
-            BRAND IDENTITY
-          </h3>
+      {/* ========== Business Details ========== */}
+      <div
+        style={{
+          borderRadius: '12px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: '#0a0a0a',
+          padding: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <Building2 size={18} style={{ color: '#ff0099' }} />
+          <span style={sectionHeaderStyle}>BUSINESS DETAILS</span>
+          <div style={{ flex: 1 }} />
+          {saveState === 'saved' && (
+            <motion.span
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              style={{ fontSize: '12px', color: '#00ff88', display: 'flex', alignItems: 'center', gap: '4px' }}
+            >
+              <Check size={12} /> Saved
+            </motion.span>
+          )}
+          {saving && (
+            <span style={{ fontSize: '12px', color: '#888', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Loader2 size={12} className="animate-spin" /> Saving...
+            </span>
+          )}
         </div>
 
-        <div className="space-y-5">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Business Name */}
           <div>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-1.5">
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
               Business Name
             </label>
             <Input
               value={form.business_name}
               onChange={(e) => updateField('business_name', e.target.value)}
               placeholder="Your business name"
-              className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+              className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
             />
           </div>
 
+          {/* Company / Brand Name */}
           <div>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-1.5">
-              Website URL <span className="text-[#555]">(optional)</span>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
+              Company / Brand Name <span style={{ color: '#555' }}>(if different)</span>
+            </label>
+            <Input
+              value={form.company_name}
+              onChange={(e) => updateField('company_name', e.target.value)}
+              placeholder="Your company or brand name"
+              className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+            />
+          </div>
+
+          {/* Website URL */}
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
+              Website URL <span style={{ color: '#555' }}>(optional)</span>
             </label>
             <div className="relative">
-              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
+              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
               <Input
                 value={form.website_url}
                 onChange={(e) => updateField('website_url', e.target.value)}
                 placeholder="https://yourbusiness.com"
-                className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+                className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
               />
             </div>
-            <p className="text-[11px] text-[#555] mt-1">
-              We use this to understand your business and tailor content
-            </p>
           </div>
 
+          {/* Phone + Email (2-col on larger screens) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
+                Phone Number
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+                <Input
+                  value={form.phone}
+                  onChange={(e) => updateField('phone', e.target.value)}
+                  placeholder="+1 234 567 890"
+                  className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+                />
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
+                Email
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+                <Input
+                  value={form.email}
+                  onChange={(e) => updateField('email', e.target.value)}
+                  placeholder="hello@yourbusiness.com"
+                  className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Business Address */}
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
+              Business Address
+            </label>
+            <Textarea
+              value={form.address}
+              onChange={(e) => updateField('address', e.target.value)}
+              placeholder="Street, City, State, Postcode"
+              rows={3}
+              className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)] resize-none"
+            />
+          </div>
+
+          {/* Target Area / Market */}
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
+              Target Area / Market
+            </label>
+            <div className="relative">
+              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+              <Input
+                value={form.target_area}
+                onChange={(e) => updateField('target_area', e.target.value)}
+                placeholder="e.g. Melbourne, Australia"
+                className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+              />
+            </div>
+          </div>
+
+          {/* Industry Dropdown */}
           <div className="relative" ref={industryRef}>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-1.5">
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '6px' }}>
               Industry
             </label>
             <button
               onClick={() => setShowIndustryDropdown(!showIndustryDropdown)}
-              className="w-full flex items-center justify-between bg-[#111] border border-[rgba(255,255,255,0.1)] rounded-lg px-3 py-2.5 text-[14px] text-left text-white focus:border-[#ff0099] outline-none transition-all hover:border-[rgba(255,255,255,0.2)]"
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                background: '#111',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                fontSize: '14px',
+                textAlign: 'left',
+                color: form.industry ? '#fff' : '#444',
+                cursor: 'pointer',
+                transition: 'border-color 0.15s',
+              }}
             >
-              <span className={form.industry ? 'text-white' : 'text-[#555]'}>
-                {form.industry || 'Select industry'}
-              </span>
-              <ChevronDown className="size-4 text-[#555]" />
+              <span>{form.industry || 'Select industry'}</span>
+              <ChevronDown size={16} style={{ color: '#555' }} />
             </button>
             <AnimatePresence>
               {showIndustryDropdown && (
@@ -239,7 +478,19 @@ function BrandTab() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -5 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute top-full left-0 right-0 mt-1 bg-[#0a0a0a] border border-[rgba(255,255,255,0.08)] rounded-lg shadow-xl z-20 overflow-hidden"
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    marginTop: '4px',
+                    background: '#0a0a0a',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                    zIndex: 20,
+                    overflow: 'hidden',
+                  }}
                 >
                   {industries.map((ind) => (
                     <button
@@ -248,49 +499,122 @@ function BrandTab() {
                         updateField('industry', ind)
                         setShowIndustryDropdown(false)
                       }}
-                      className={cn(
-                        'w-full flex items-center justify-between px-3 py-2 text-[13px] text-left transition-colors hover:bg-[#1a1a1a]',
-                        form.industry === ind
-                          ? 'text-[#ff0099]'
-                          : 'text-[#cccccc]'
-                      )}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        fontSize: '13px',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        transition: 'background 0.1s',
+                        background:
+                          form.industry === ind
+                            ? 'rgba(255,0,153,0.08)'
+                            : 'transparent',
+                        color:
+                          form.industry === ind ? '#ff0099' : '#cccccc',
+                        border: 'none',
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = '#1a1a1a')
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background =
+                          form.industry === ind
+                            ? 'rgba(255,0,153,0.08)'
+                            : 'transparent')
+                      }
                     >
                       {ind}
-                      {form.industry === ind && <Check className="size-3.5" />}
+                      {form.industry === ind && <Check size={14} />}
                     </button>
                   ))}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
+        </div>
+      </div>
 
+      {/* ========== Brand Identity ========== */}
+      <div
+        style={{
+          borderRadius: '12px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: '#0a0a0a',
+          padding: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <Sparkles size={18} style={{ color: '#00ccff' }} />
+          <span style={sectionHeaderStyle}>BRAND IDENTITY</span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Brand Voice Chips */}
           <div>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-2">
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '10px' }}>
               Brand Voice
             </label>
             <div className="flex flex-wrap gap-2">
-              {brandVoices.map((voice) => (
-                <button
-                  key={voice}
-                  onClick={() => updateField('brand_voice', voice)}
-                  className={cn(
-                    'flex items-center gap-2 px-3 py-2 rounded-lg border text-[13px] font-medium transition-all',
-                    form.brand_voice === voice
-                      ? 'border-[#ff0099] bg-[rgba(255,0,153,0.1)] text-[#ff0099]'
-                      : 'border-[rgba(255,255,255,0.1)] bg-[#111] text-[#888] hover:text-white hover:border-[rgba(255,255,255,0.2)]'
-                  )}
-                >
-                  {form.brand_voice === voice ? (
-                    <div className="size-3.5 rounded-full bg-gradient-to-r from-[#ff0099] to-[#00ccff] flex items-center justify-center">
-                      <Check className="size-2.5 text-black" />
-                    </div>
-                  ) : (
-                    <div className="size-3.5 rounded-full border border-[rgba(255,255,255,0.2)]" />
-                  )}
-                  {voice}
-                </button>
-              ))}
+              {brandVoices.map((voice) => {
+                const active = form.brand_voice === voice
+                return (
+                  <button
+                    key={voice}
+                    onClick={() => updateField('brand_voice', voice)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      border: active
+                        ? '1px solid #ff0099'
+                        : '1px solid rgba(255,255,255,0.1)',
+                      background: active
+                        ? 'rgba(255,0,153,0.1)'
+                        : '#111',
+                      color: active ? '#ff0099' : '#888',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {active ? (
+                      <div
+                        style={{
+                          width: '14px',
+                          height: '14px',
+                          borderRadius: '50%',
+                          background:
+                            'linear-gradient(135deg, #ff0099, #00ccff)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Check size={10} style={{ color: '#000' }} />
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          width: '14px',
+                          height: '14px',
+                          borderRadius: '50%',
+                          border: '1px solid rgba(255,255,255,0.2)',
+                        }}
+                      />
+                    )}
+                    {voice}
+                  </button>
+                )
+              })}
             </div>
+
             <AnimatePresence>
               {showCustomVoice && (
                 <motion.div
@@ -298,7 +622,7 @@ function BrandTab() {
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="overflow-hidden"
+                  style={{ overflow: 'hidden' }}
                 >
                   <Textarea
                     value={form.custom_brand_voice}
@@ -306,146 +630,468 @@ function BrandTab() {
                       updateField('custom_brand_voice', e.target.value)
                     }
                     placeholder="Describe your custom brand voice..."
-                    rows={4}
-                    className="mt-3 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
+                    rows={3}
+                    className="mt-3 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)] resize-none"
                   />
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
 
+          {/* Brand Colors */}
           <div>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-1.5">
-              About Your Business{' '}
-              <span className="text-[#ff0099]">GPT uses this for every response</span>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#cccccc', marginBottom: '10px' }}>
+              Brand Colors <span style={{ color: '#555' }}>(optional)</span>
             </label>
-            <Textarea
-              value={form.about_business || form.brand_description}
-              onChange={(e) => {
-                updateField('about_business', e.target.value)
-                updateField('brand_description', e.target.value)
-              }}
-              placeholder="Tell us who you are, what your business does, who your customers are, and what you're trying to achieve on social media. The more detail, the better GPT can tailor your content."
-              rows={6}
-              className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)]"
-            />
-            <p className="text-[11px] text-[#555] mt-1">
-              Example: "We're a family-run bakery in Melbourne specialising in vegan donuts. Our customers are 18-35 health-conscious millennials. We want to grow our Instagram to drive foot traffic."
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-2">
-              Brand Colors{' '}
-              <span className="text-[#555]">(optional)</span>
-            </label>
-            <div className="flex gap-4">
-              <div className="flex items-center gap-3">
+            <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <input
                   type="color"
                   value={form.brand_color_primary}
                   onChange={(e) =>
                     updateField('brand_color_primary', e.target.value)
                   }
-                  className="size-10 rounded-full border-2 border-[rgba(255,255,255,0.1)] cursor-pointer bg-transparent"
+                  style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    border: '2px solid rgba(255,255,255,0.1)',
+                    cursor: 'pointer',
+                    background: 'transparent',
+                    padding: 0,
+                  }}
                 />
                 <div>
-                  <p className="text-[11px] text-[#888]">Primary</p>
-                  <p className="text-[12px] text-white font-mono uppercase">
+                  <p style={{ fontSize: '11px', color: '#888' }}>Primary</p>
+                  <p
+                    style={{
+                      fontSize: '12px',
+                      color: '#fff',
+                      fontFamily: 'monospace',
+                      textTransform: 'uppercase',
+                    }}
+                  >
                     {form.brand_color_primary}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <input
                   type="color"
                   value={form.brand_color_secondary}
                   onChange={(e) =>
                     updateField('brand_color_secondary', e.target.value)
                   }
-                  className="size-10 rounded-full border-2 border-[rgba(255,255,255,0.1)] cursor-pointer bg-transparent"
+                  style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    border: '2px solid rgba(255,255,255,0.1)',
+                    cursor: 'pointer',
+                    background: 'transparent',
+                    padding: 0,
+                  }}
                 />
                 <div>
-                  <p className="text-[11px] text-[#888]">Secondary</p>
-                  <p className="text-[12px] text-white font-mono uppercase">
+                  <p style={{ fontSize: '11px', color: '#888' }}>Secondary</p>
+                  <p
+                    style={{
+                      fontSize: '12px',
+                      color: '#fff',
+                      fontFamily: 'monospace',
+                      textTransform: 'uppercase',
+                    }}
+                  >
                     {form.brand_color_secondary}
                   </p>
                 </div>
               </div>
             </div>
           </div>
-
-          <div>
-            <label className="block text-[13px] font-medium text-[#cccccc] mb-2">
-              Social Media Links
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="relative">
-                <Instagram className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
-                <Input
-                  value={form.social_instagram}
-                  onChange={(e) =>
-                    updateField('social_instagram', e.target.value)
-                  }
-                  placeholder="@username"
-                  className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099]"
-                />
-              </div>
-              <div className="relative">
-                <Globe className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
-                <Input
-                  value={form.social_tiktok}
-                  onChange={(e) =>
-                    updateField('social_tiktok', e.target.value)
-                  }
-                  placeholder="@username"
-                  className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099]"
-                />
-              </div>
-              <div className="relative">
-                <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
-                <Input
-                  value={form.social_youtube}
-                  onChange={(e) =>
-                    updateField('social_youtube', e.target.value)
-                  }
-                  placeholder="Channel URL"
-                  className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099]"
-                />
-              </div>
-              <div className="relative">
-                <Twitter className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
-                <Input
-                  value={form.social_twitter}
-                  onChange={(e) =>
-                    updateField('social_twitter', e.target.value)
-                  }
-                  placeholder="@username"
-                  className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#555] focus:border-[#ff0099]"
-                />
-              </div>
-            </div>
-          </div>
-
-          <Button
-            onClick={handleSave}
-            disabled={!isDirty || saving}
-            className={cn(
-              'mt-2 font-["Bangers"] uppercase tracking-wider text-[14px] px-8 py-2.5 rounded-lg transition-all',
-              saveState === 'saved'
-                ? 'bg-[#00ff88] text-black hover:bg-[#00ff88]/90'
-                : 'bg-gradient-to-r from-[#ff0099] to-[#00ccff] text-black hover:scale-105 shadow-[0_0_20px_rgba(255,0,153,0.3)]'
-            )}
-          >
-            {saving ? (
-              <Loader2 className="size-4 mr-2 animate-spin" />
-            ) : saveState === 'saved' ? (
-              <Check className="size-4 mr-2" />
-            ) : null}
-            {saving ? 'Saving...' : saveState === 'saved' ? 'Saved!' : 'Save Changes'}
-          </Button>
         </div>
       </div>
+
+      {/* ========== About Your Business ========== */}
+      <div
+        style={{
+          borderRadius: '12px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: '#0a0a0a',
+          padding: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <Tag size={18} style={{ color: '#ff0099' }} />
+          <span style={sectionHeaderStyle}>ABOUT YOUR BUSINESS</span>
+          <span style={{ fontSize: '11px', color: '#ff0099', background: 'rgba(255,0,153,0.1)', padding: '2px 8px', borderRadius: '4px', marginLeft: '4px' }}>
+            GPT uses this for every response
+          </span>
+        </div>
+
+        <Textarea
+          value={form.about_business}
+          onChange={(e) => updateField('about_business', e.target.value)}
+          placeholder={
+            'Tell us as much as possible about your business \u2014 what you sell, your story, your goals, who your customers are, what makes you different... The more detail, the better Get Posted AI can help you.'
+          }
+          rows={6}
+          className="bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099] focus-visible:ring-[rgba(255,0,153,0.15)] resize-none text-[14px] leading-relaxed"
+        />
+        <p style={{ fontSize: '11px', color: '#555', marginTop: '8px' }}>
+          Example: &ldquo;We&rsquo;re a family-run bakery in Melbourne specialising in vegan donuts. Our customers are 18-35 health-conscious millennials. We want to grow our Instagram to drive foot traffic.&rdquo;
+        </p>
+      </div>
+
+      {/* ========== Logo Upload ========== */}
+      <div
+        style={{
+          borderRadius: '12px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: '#0a0a0a',
+          padding: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <Camera size={18} style={{ color: '#00ccff' }} />
+          <span style={sectionHeaderStyle}>LOGO</span>
+        </div>
+
+        <input
+          ref={logoInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) handleLogoSelect(file)
+            e.currentTarget.value = ''
+          }}
+          style={{ display: 'none' }}
+        />
+
+        {form.logo_url ? (
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <img
+              src={form.logo_url}
+              alt="Logo preview"
+              style={{
+                width: '120px',
+                height: '120px',
+                objectFit: 'contain',
+                borderRadius: '12px',
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: '#111',
+                padding: '8px',
+              }}
+            />
+            <button
+              onClick={() => {
+                setForm((prev) => {
+                  const next = { ...prev, logo_url: '' }
+                  triggerAutoSave(next, businessPhotos)
+                  return next
+                })
+              }}
+              style={{
+                position: 'absolute',
+                top: '-8px',
+                right: '-8px',
+                width: '24px',
+                height: '24px',
+                borderRadius: '50%',
+                background: '#ff3366',
+                border: 'none',
+                color: '#fff',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '14px',
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <div
+            onClick={() => logoInputRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setLogoDragging(true)
+            }}
+            onDragLeave={() => setLogoDragging(false)}
+            onDrop={handleLogoDrop}
+            style={{
+              border: logoDragging
+                ? '2px dashed #ff0099'
+                : '2px dashed rgba(255,255,255,0.15)',
+              borderRadius: '12px',
+              padding: '40px 24px',
+              textAlign: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              background: logoDragging
+                ? 'rgba(255,0,153,0.05)'
+                : 'transparent',
+            }}
+          >
+            <Upload
+              size={32}
+              style={{
+                color: logoDragging ? '#ff0099' : '#555',
+                margin: '0 auto 12px',
+                transition: 'color 0.2s',
+              }}
+            />
+            <p style={{ fontSize: '14px', color: '#888', marginBottom: '4px' }}>
+              <span style={{ color: '#ff0099', fontWeight: 500 }}>Click to upload</span> or drag and drop
+            </p>
+            <p style={{ fontSize: '12px', color: '#555' }}>
+              SVG, PNG, JPG (max 5MB)
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* ========== Business Photos ========== */}
+      <div
+        style={{
+          borderRadius: '12px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: '#0a0a0a',
+          padding: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <Camera size={18} style={{ color: '#ff0099' }} />
+          <span style={sectionHeaderStyle}>BUSINESS PHOTOS</span>
+        </div>
+
+        <input
+          ref={photosInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={(e) => {
+            const files = Array.from(e.target.files || [])
+            files.forEach((f) => handlePhotoSelect(f))
+            e.currentTarget.value = ''
+          }}
+          style={{ display: 'none' }}
+        />
+
+        <div
+          onDragOver={(e) => {
+            e.preventDefault()
+            setPhotosDragging(true)
+          }}
+          onDragLeave={() => setPhotosDragging(false)}
+          onDrop={handlePhotosDrop}
+          style={{
+            border: photosDragging
+              ? '2px dashed #ff0099'
+              : '2px dashed rgba(255,255,255,0.1)',
+            borderRadius: '12px',
+            padding: '16px',
+            transition: 'all 0.2s',
+            background: photosDragging
+              ? 'rgba(255,0,153,0.05)'
+              : 'transparent',
+          }}
+        >
+          {/* Photo grid */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
+              gap: '12px',
+            }}
+          >
+            {/* Add more button */}
+            <button
+              onClick={() => photosInputRef.current?.click()}
+              style={{
+                aspectRatio: '1',
+                borderRadius: '10px',
+                border: '2px dashed rgba(255,255,255,0.15)',
+                background: '#111',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                color: '#888',
+                minHeight: '100px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(255,0,153,0.4)'
+                e.currentTarget.style.color = '#ff0099'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+                e.currentTarget.style.color = '#888'
+              }}
+            >
+              <Upload size={20} />
+              <span style={{ fontSize: '11px', fontWeight: 500 }}>Add Photos</span>
+            </button>
+
+            {/* Thumbnails */}
+            {businessPhotos.map((photo, index) => (
+              <div
+                key={index}
+                style={{
+                  position: 'relative',
+                  aspectRatio: '1',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  minHeight: '100px',
+                }}
+              >
+                <img
+                  src={photo}
+                  alt={`Business photo ${index + 1}`}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }}
+                />
+                <button
+                  onClick={() => removePhoto(index)}
+                  style={{
+                    position: 'absolute',
+                    top: '4px',
+                    right: '4px',
+                    width: '22px',
+                    height: '22px',
+                    borderRadius: '50%',
+                    background: 'rgba(0,0,0,0.7)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    padding: 0,
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {businessPhotos.length === 0 && (
+            <p
+              style={{
+                textAlign: 'center',
+                fontSize: '12px',
+                color: '#555',
+                marginTop: '12px',
+              }}
+            >
+              Drag and drop photos here or click &ldquo;Add Photos&rdquo; to browse
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* ========== Social Media Links ========== */}
+      <div
+        style={{
+          borderRadius: '12px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: '#0a0a0a',
+          padding: '24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <Link size={18} style={{ color: '#00ccff' }} />
+          <span style={sectionHeaderStyle}>SOCIAL MEDIA</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="relative">
+            <Instagram className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+            <Input
+              value={form.social_instagram}
+              onChange={(e) =>
+                updateField('social_instagram', e.target.value)
+              }
+              placeholder="@username"
+              className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099]"
+            />
+          </div>
+          <div className="relative">
+            <Globe className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+            <Input
+              value={form.social_tiktok}
+              onChange={(e) =>
+                updateField('social_tiktok', e.target.value)
+              }
+              placeholder="@username"
+              className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099]"
+            />
+          </div>
+          <div className="relative">
+            <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+            <Input
+              value={form.social_youtube}
+              onChange={(e) =>
+                updateField('social_youtube', e.target.value)
+              }
+              placeholder="Channel URL"
+              className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099]"
+            />
+          </div>
+          <div className="relative">
+            <Twitter className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555] z-10" />
+            <Input
+              value={form.social_twitter}
+              onChange={(e) =>
+                updateField('social_twitter', e.target.value)
+              }
+              placeholder="@username"
+              className="pl-10 bg-[#111] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#444] focus:border-[#ff0099]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Saved indicator footer */}
+      <AnimatePresence>
+        {saveState === 'saved' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            style={{
+              position: 'fixed',
+              bottom: '24px',
+              right: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              background: '#0a0a0a',
+              border: '1px solid rgba(0,255,136,0.3)',
+              borderRadius: '10px',
+              color: '#00ff88',
+              fontSize: '13px',
+              fontWeight: 500,
+              boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+              zIndex: 100,
+            }}
+          >
+            <Check size={16} />
+            All changes saved
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }
