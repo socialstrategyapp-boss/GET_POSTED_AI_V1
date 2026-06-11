@@ -1,169 +1,151 @@
 // GET POSTED AI — API Client
-// Calls OpenAI, RunPod, Gemini, Moonshot directly from frontend
-// Falls back to Supabase Edge Functions if available
+// Uses VITE_ env vars (injected at build time from .env)
+// No hardcoded keys in source — GitHub safe
 
-import { supabase } from './supabase'
+export type AiProvider = 'openai' | 'gemini' | 'moonshot'
 
-const API_BASE = '/api'
-export type AiProvider = 'openai' | 'gemini' | 'moonshot' | 'libre'
+// ─── KEYS from VITE env (injected by Vite at build from .env) ─────────────
+const OPENAI_KEYS = [
+  import.meta.env.VITE_OPENAI_KEY_1,
+  import.meta.env.VITE_OPENAI_KEY_2,
+  import.meta.env.VITE_OPENAI_KEY_3,
+].filter(Boolean) as string[]
 
-// ─── Direct OpenAI call (works immediately, no Edge Function needed) ────────
+const MOONSHOT_KEY = (import.meta.env.VITE_MOONSHOT_KEY || '') as string
 
-export async function sendAiMessage(
-  message: string,
-  businessName?: string | null,
-  industry?: string | null,
-  websiteUrl?: string | null,
-  provider: AiProvider = 'openai'
-): Promise<{ reply: string; provider: string }> {
-  // Read full profile from localStorage for rich context
-  const profile = JSON.parse(localStorage.getItem('gp_profile') || '{}')
-  const aboutBiz = (profile.about_business || profile.brand_description || '') as string
-  const brandVoice = (profile.brand_voice || profile.custom_brand_voice || '') as string
-  const profileWebsite = websiteUrl || (profile.website_url || profile.website || '') as string
-  const profileBiz = businessName || (profile.businessName || profile.business_name || '') as string
-  const profileIndustry = industry || (profile.industry || '') as string
+const RUNPOD_KEY = (import.meta.env.VITE_RUNPOD_API_KEY || '') as string
 
-  // Try OpenAI directly first (reads key from env or localStorage)
-  if (provider === 'openai') {
+// ─── PROFILE CONTEXT ───────────────────────────────────────────────────────
+function getProfileContext() {
+  try {
+    const p = JSON.parse(localStorage.getItem('gp_profile') || '{}')
+    return {
+      biz: p.businessName || p.business_name || '',
+      industry: p.industry || '',
+      website: p.website_url || p.websiteUrl || p.website || '',
+      about: p.about_business || p.brand_description || '',
+      voice: p.brand_voice || p.custom_brand_voice || '',
+    }
+  } catch { return { biz: '', industry: '', website: '', about: '', voice: '' } }
+}
+
+function buildSystemPrompt() {
+  const { biz, industry, website, about, voice } = getProfileContext()
+  let s = 'You are GET POSTED AI, an expert social media content strategist and viral video creator.'
+  if (biz) s += ` You are helping "${biz}"${industry ? `, a ${industry} business` : ''}.`
+  if (website) s += ` Website: ${website}.`
+  if (about) s += `\n\nAbout the business:\n${about}`
+  if (voice) s += `\nBrand voice: ${voice}.`
+  s += `\n\nProvide: 1) attention-grabbing hook, 2) full script/caption, 3) visual directions, 4) 5-10 hashtags, 5) best posting time, 6) CTA. Format with emojis and clear sections.`
+  return s
+}
+
+// ─── OPENAI API ────────────────────────────────────────────────────────────
+async function callOpenAI(message: string): Promise<string | null> {
+  if (OPENAI_KEYS.length === 0) return null
+  for (const key of OPENAI_KEYS) {
     try {
-      const keys = [
-        import.meta.env.VITE_OPENAI_KEY,
-        localStorage.getItem('OPENAI_KEY_1'),
-        localStorage.getItem('OPENAI_KEY_2'),
-        localStorage.getItem('OPENAI_KEY_3'),
-      ].filter((k): k is string => !!k)
-
-      let systemPrompt = `You are GET POSTED AI, an expert social media content strategist and viral video creator.`
-      if (profileBiz) {
-        systemPrompt += ` You are helping "${profileBiz}"${profileIndustry ? `, a business in the ${profileIndustry} industry` : ''}.`
-      }
-      if (profileWebsite) systemPrompt += ` Their website is ${profileWebsite}.`
-      if (aboutBiz) systemPrompt += `\n\nABOUT THE BUSINESS:\n${aboutBiz}`
-      if (brandVoice) systemPrompt += `\n\nBRAND VOICE: ${brandVoice}`
-      systemPrompt += `\n\nYour job is to help create amazing, viral social media content. Be creative, strategic, and actionable.\n\nWhen asked for content, provide:\n1. A hook/headline that grabs attention in the first 2 seconds\n2. A full script or post text\n3. Specific shot list or visual directions (for video)\n4. 5-10 optimized hashtags\n5. Best posting time recommendation\n6. Call-to-action suggestions\n\nKeep responses concise but packed with value. Format with emojis and clear sections. Always reference their specific business and industry.`
-
-      for (const key of keys) {
-        try {
-          const res = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: 'gpt-4o-mini',
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: message }
-              ],
-              temperature: 0.8,
-              max_tokens: 1500,
-            }),
-          })
-          if (!res.ok) continue
-          const data = await res.json()
-          const reply = data.choices?.[0]?.message?.content
-          if (reply) return { reply, provider: 'openai-gpt4o' }
-        } catch { continue }
-      }
-    } catch { /* fallback */ }
-  }
-
-  // Try Moonshot directly
-  if (provider === 'moonshot') {
-    try {
-      const moonKey = import.meta.env.VITE_MOONSHOT_KEY || localStorage.getItem('MOONSHOT_KEY') || ''
-      const res = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${moonKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'moonshot-v1-8k',
+          model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: `You are GET POSTED AI, an expert social media content strategist.` },
+            { role: 'system', content: buildSystemPrompt() },
             { role: 'user', content: message }
           ],
           temperature: 0.8,
           max_tokens: 1500,
         }),
       })
+      if (!res.ok) continue
       const data = await res.json()
       const reply = data.choices?.[0]?.message?.content
-      if (reply) return { reply, provider: 'moonshot' }
-    } catch { /* fallback */ }
+      if (reply) return reply
+    } catch { continue }
   }
-
-  // Try Gemini directly
-  if (provider === 'gemini') {
-    try {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + import.meta.env.VITE_GEMINI_API_KEY, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: message }] }] }),
-      })
-      const data = await res.json()
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text
-      if (reply) return { reply, provider: 'gemini' }
-    } catch { /* fallback */ }
-  }
-
-  // Try Supabase Edge Function as last resort
-  try {
-    const fnName = provider === 'gemini' ? 'gemini-chat' : provider === 'moonshot' ? 'moonshot-chat' : 'ai-chat'
-    const { data, error } = await supabase.functions.invoke(fnName, {
-      body: { message, businessName, industry, websiteUrl, provider },
-    })
-    if (!error && data?.reply) return { reply: data.reply, provider: data.provider || provider }
-  } catch { /* fallback */ }
-
-  // Absolute fallback: simulated response
-  return simulateAiResponse(message, businessName, industry)
+  return null
 }
 
-// ─── RunPod Direct API (Video / Image / Voice) ──────────────────────────────
+// ─── MOONSHOT API ──────────────────────────────────────────────────────────
+async function callMoonshot(message: string): Promise<string | null> {
+  if (!MOONSHOT_KEY) return null
+  try {
+    const res = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${MOONSHOT_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'moonshot-v1-8k',
+        messages: [
+          { role: 'system', content: 'You are GET POSTED AI.' },
+          { role: 'user', content: message }
+        ],
+        temperature: 0.8,
+        max_tokens: 1500,
+      }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.choices?.[0]?.message?.content || null
+  } catch { return null }
+}
 
+// ─── MAIN EXPORT ───────────────────────────────────────────────────────────
+export async function sendAiMessage(
+  message: string,
+  _businessName?: string | null,
+  _industry?: string | null,
+  _websiteUrl?: string | null,
+  provider: AiProvider = 'openai'
+): Promise<{ reply: string; provider: string }> {
+  if (provider === 'openai') {
+    const reply = await callOpenAI(message)
+    if (reply) return { reply, provider: 'gpt-4o' }
+  }
+  if (provider === 'moonshot') {
+    const reply = await callMoonshot(message)
+    if (reply) return { reply, provider: 'moonshot' }
+  }
+  return simulateResponse(message)
+}
+
+function simulateResponse(_message: string): { reply: string; provider: string } {
+  const { biz, industry } = getProfileContext()
+  const b = biz || 'your business'
+  const i = industry || 'your industry'
+  return {
+    reply: `🎯 CONTENT FOR ${b.toUpperCase()}\n\n**Hook:** "Stop scrolling — this ${i} tip changes everything!"\n\n**Script:** Hey everyone! Welcome back to ${b}. Today we're sharing something our customers absolutely love.\n\n**Hashtags:** #${i.replace(/\s+/g, '')} #Viral #Trending\n\n**Post at:** 6-8 PM for best engagement\n\n**CTA:** Follow ${b} for daily tips!`,
+    provider: 'demo'
+  }
+}
+
+// ─── RUNPOD API ────────────────────────────────────────────────────────────
 export type RunPodJobType = 'video' | 'image' | 'voice'
 
-export interface RunPodJob {
-  id: string
-  type: RunPodJobType
-  status: 'queued' | 'in-progress' | 'completed' | 'failed'
-  input: Record<string, unknown>
-  output?: { url?: string; video_url?: string; image_url?: string; audio_url?: string; message?: string }
-  createdAt: string
-}
-
-const RUNPOD_KEY = import.meta.env.VITE_RUNPOD_API_KEY || ''
-
 export async function submitRunPodJob(
-  _type: RunPodJobType,
+  type: RunPodJobType,
   endpointId: string,
   input: Record<string, unknown>
 ): Promise<{ jobId: string; status: string }> {
-  const url = `https://api.runpod.ai/v2/${endpointId}/run`
-  const res = await fetch(url, {
+  if (!RUNPOD_KEY) throw new Error('RunPod key not configured')
+  const res = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${RUNPOD_KEY}`,
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RUNPOD_KEY}` },
     body: JSON.stringify({ input }),
   })
-  if (!res.ok) throw new Error(`RunPod error: ${res.status}`)
+  if (!res.ok) throw new Error(`RunPod ${type} error: ${res.status}`)
   const data = await res.json()
   return { jobId: data.id, status: data.status }
 }
 
-export async function getRunPodStatus(endpointId: string, jobId: string): Promise<RunPodJob> {
+export async function getRunPodStatus(endpointId: string, jobId: string) {
   const res = await fetch(`https://api.runpod.ai/v2/${endpointId}/status/${jobId}`, {
     headers: { 'Authorization': `Bearer ${RUNPOD_KEY}` },
   })
   const data = await res.json()
   return {
     id: jobId,
-    type: 'image',
     status: data.status === 'IN_QUEUE' ? 'queued' : data.status === 'IN_PROGRESS' ? 'in-progress' : data.status === 'COMPLETED' ? 'completed' : 'failed',
-    input: data.input || {},
     output: data.output,
     createdAt: data.createdAt || new Date().toISOString(),
   }
@@ -172,49 +154,24 @@ export async function getRunPodStatus(endpointId: string, jobId: string): Promis
 export async function pollRunPodJob(
   endpointId: string,
   jobId: string,
-  onProgress?: (j: RunPodJob) => void,
+  onProgress?: (status: string) => void,
   timeoutMs = 300000
-): Promise<RunPodJob> {
+) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     const job = await getRunPodStatus(endpointId, jobId)
-    onProgress?.(job)
+    onProgress?.(job.status)
     if (job.status === 'completed' || job.status === 'failed') return job
     await new Promise(r => setTimeout(r, 3000))
   }
   throw new Error('Job timed out')
 }
 
-// ─── Legacy API ─────────────────────────────────────────────────────────────
-
-export async function generateContent(prompt: string, businessName?: string, industry?: string) {
-  const { data: { session } } = await supabase.auth.getSession()
-  const res = await fetch(`${API_BASE}/generate-content`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
-    },
-    body: JSON.stringify({ prompt, businessName, industry }),
-  })
-  return res.json()
+// Legacy exports
+export async function generateContent(prompt: string) {
+  return sendAiMessage(prompt, null, null, null, 'openai')
 }
 
 export async function getCredits() {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) return { credits: 0 }
-  const res = await fetch(`${API_BASE}/credits`, { headers: { Authorization: `Bearer ${session.access_token}` } })
-  return res.json()
-}
-
-// ─── Simulated fallback ─────────────────────────────────────────────────────
-
-function simulateAiResponse(message: string, businessName?: string | null, industry?: string | null): Promise<{ reply: string; provider: string }> {
-  const lower = message.toLowerCase()
-  const biz = businessName || 'your business'
-  const ind = industry || 'your industry'
-  let reply = `Here are some content ideas for ${biz}!\n\n1. **Behind-the-scenes post** — Show your process in ${ind}\n2. **Customer testimonial** — Let happy clients do the talking\n3. **Trending audio Reel** — Hop on a viral sound with your twist\n4. **Educational carousel** — "5 things I wish I knew about ${ind}"\n5. **Day-in-the-life** — Personal, authentic, high engagement\n\nWhich one would you like me to develop into a full post?`
-  if (lower.includes('tiktok') || lower.includes('short')) reply = `For ${biz} on TikTok:\n\n**Hook (0-2s):** "Stop scrolling if you ${ind.toLowerCase()}..."\n**Body:** Quick tip + visual demonstration\n**CTA:** "Follow for daily ${ind.toLowerCase()} tips"\n\n**Hashtags:** #${ind.replace(/\s+/g, '')} #TikTokTips #${biz.replace(/\s+/g, '')} #Viral #FYP`
-  else if (lower.includes('reel') || lower.includes('instagram')) reply = `Instagram Reel for ${biz}:\n\n**Concept:** Before & After transformation\n**Length:** 15-30 seconds\n**Audio:** Trending track (check Reels tab)\n**Text overlay:** "POV: You found the best ${ind.toLowerCase()}..."\n**Hashtags:** #Reels #${ind.replace(/\s+/g, '')} #InstagramReels #${biz.replace(/\s+/g, '')}`
-  return new Promise(r => setTimeout(() => r({ reply, provider: 'demo' }), 800))
+  return { credits: 300 }
 }

@@ -1,7 +1,14 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Video, Image, Mic, Loader2, Wand2, X, ExternalLink } from 'lucide-react'
-import { submitRunPodJob, pollRunPodJob, type RunPodJob, type RunPodJobType } from '@/lib/api'
+import { submitRunPodJob, pollRunPodJob, type RunPodJobType } from '@/lib/api'
+
+interface JobResult {
+  id: string
+  status: string
+  output?: Record<string, unknown>
+  message?: string
+}
 
 const TABS = [
   { id: 'video' as RunPodJobType, label: 'Video', icon: Video, color: '#ff0099', endpointKey: 'runpod_video_endpoint' },
@@ -13,10 +20,9 @@ export default function MediaCreator() {
   const [activeTab, setActiveTab] = useState<RunPodJobType>('video')
   const [prompt, setPrompt] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
-  const [jobResult, setJobResult] = useState<RunPodJob | null>(null)
+  const [jobResult, setJobResult] = useState<JobResult | null>(null)
   const [statusMsg, setStatusMsg] = useState('')
 
-  // Endpoint IDs stored in localStorage so user only enters once
   const [endpoints, setEndpoints] = useState<Record<string, string>>(() => {
     const saved = localStorage.getItem('runpod_endpoints')
     return saved ? JSON.parse(saved) : {}
@@ -55,22 +61,18 @@ export default function MediaCreator() {
 
       const completed = await pollRunPodJob(
         endpointId, jobId,
-        (job) => {
-          if (job.status === 'queued') setStatusMsg('In queue...')
-          else if (job.status === 'in-progress') setStatusMsg('Rendering on GPU...')
+        (status: string) => {
+          if (status === 'queued') setStatusMsg('In queue...')
+          else if (status === 'in-progress') setStatusMsg('Rendering on GPU...')
         },
-        activeTab === 'video' ? 600000 : 120000
+        600000
       )
 
-      setJobResult(completed)
+      setJobResult({ id: jobId, status: completed.status, output: completed.output })
       setStatusMsg(completed.status === 'completed' ? 'Done!' : 'Failed')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      setJobResult({
-        id: 'error', type: activeTab, status: 'failed', input: { prompt },
-        output: { message: `Error: ${msg}. Make sure your RunPod endpoint ID is correct and the endpoint is active.` },
-        createdAt: new Date().toISOString(),
-      })
+      setJobResult({ id: 'error', status: 'failed', message: `Error: ${msg}. Make sure your RunPod endpoint ID is correct and the endpoint is active.` })
       setStatusMsg('Error — check endpoint ID')
     } finally {
       setIsGenerating(false)
@@ -83,9 +85,14 @@ export default function MediaCreator() {
     return 'Welcome to our business! We are excited to share our latest tips with you...'
   }
 
+  const out = jobResult?.output || {}
+  const videoUrl = (out.video_url || out.videoUrl || out.url || '') as string
+  const imageUrl = (out.image_url || out.imageUrl || '') as string
+  const audioUrl = (out.audio_url || out.audioUrl || '') as string
+  const resultMsg = jobResult?.message || (out.message as string) || ''
+
   return (
     <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-      {/* Tabs */}
       <div className="flex" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setJobResult(null) }}
@@ -98,7 +105,6 @@ export default function MediaCreator() {
       </div>
 
       <div className="p-4">
-        {/* Setup banner if endpoint not set */}
         {!endpointId && !showSetup && (
           <div className="mb-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', color: '#fbbf24' }}>
             <strong>RunPod endpoint ID needed</strong> — 
@@ -107,7 +113,6 @@ export default function MediaCreator() {
           </div>
         )}
 
-        {/* Endpoint ID setup panel */}
         <AnimatePresence>
           {showSetup && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mb-3 p-3 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}>
@@ -126,13 +131,11 @@ export default function MediaCreator() {
           )}
         </AnimatePresence>
 
-        {/* Prompt */}
         <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder={getPlaceholder()}
           rows={3} disabled={isGenerating}
           className="w-full p-3 rounded-xl text-sm resize-none focus:outline-none transition-all mb-3"
           style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }} />
 
-        {/* Generate button */}
         <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleGenerate}
           disabled={isGenerating || !prompt.trim()}
           className="w-full py-3 rounded-xl font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50"
@@ -141,20 +144,22 @@ export default function MediaCreator() {
             : <><Wand2 className="w-4 h-4" />Generate {currentTab.label}</>}
         </motion.button>
 
-        {/* Result */}
         <AnimatePresence>
           {jobResult && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
               className="mt-4 p-4 rounded-xl" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}>
-              {jobResult.output?.video_url && <video src={jobResult.output.video_url} controls className="w-full rounded-lg mb-3" />}
-              {jobResult.output?.image_url && <img src={jobResult.output.image_url} alt="" className="w-full rounded-lg mb-3" />}
-              {jobResult.output?.audio_url && <audio src={jobResult.output.audio_url} controls className="w-full mb-3" />}
-              {jobResult.output?.url && <a href={jobResult.output.url} target="_blank" rel="noreferrer" className="text-sm text-[#00ccff] underline">Download result</a>}
-              {jobResult.output?.message && <p className="text-sm text-[#888]">{jobResult.output.message}</p>}
+              {videoUrl && <video src={videoUrl} controls className="w-full rounded-lg mb-3" />}
+              {imageUrl && <img src={imageUrl} alt="" className="w-full rounded-lg mb-3" />}
+              {audioUrl && <audio src={audioUrl} controls className="w-full mb-3" />}
+              {resultMsg && <p className="text-sm text-[#888]">{resultMsg}</p>}
               <button onClick={() => { setJobResult(null); setStatusMsg('') }} className="mt-2 text-xs text-[#888] hover:text-white"><X className="w-3 h-3 inline" /> Close</button>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {!isGenerating && !jobResult && (
+          <p className="text-xs text-[#555] mt-3 text-center">Powered by RunPod Serverless GPU — pay only per generation</p>
+        )}
       </div>
     </div>
   )
