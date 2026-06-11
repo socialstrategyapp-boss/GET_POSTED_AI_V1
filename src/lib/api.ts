@@ -40,12 +40,29 @@ function buildSystemPrompt() {
   return s
 }
 
+// ─── Fetch with timeout ────────────────────────────────────────────────────
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    return res
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Request timed out')
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // ─── OPENAI API ────────────────────────────────────────────────────────────
 async function callOpenAI(message: string): Promise<string | null> {
   if (OPENAI_KEYS.length === 0) return null
   for (const key of OPENAI_KEYS) {
     try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -57,7 +74,7 @@ async function callOpenAI(message: string): Promise<string | null> {
           temperature: 0.8,
           max_tokens: 1500,
         }),
-      })
+      }, 15000)
       if (!res.ok) continue
       const data = await res.json()
       const reply = data.choices?.[0]?.message?.content
@@ -71,7 +88,7 @@ async function callOpenAI(message: string): Promise<string | null> {
 async function callMoonshot(message: string): Promise<string | null> {
   if (!MOONSHOT_KEY) return null
   try {
-    const res = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+    const res = await fetchWithTimeout('https://api.moonshot.cn/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${MOONSHOT_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -83,10 +100,26 @@ async function callMoonshot(message: string): Promise<string | null> {
         temperature: 0.8,
         max_tokens: 1500,
       }),
-    })
+    }, 15000)
     if (!res.ok) return null
     const data = await res.json()
     return data.choices?.[0]?.message?.content || null
+  } catch { return null }
+}
+
+// ─── SUPABASE EDGE FUNCTION (CORS-safe proxy) ──────────────────────────────
+import { supabase } from './supabase'
+
+async function callSupabaseEdge(message: string): Promise<string | null> {
+  try {
+    // 5-second timeout for Supabase Edge Function
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Supabase timeout')), 5000)
+    )
+    const invokePromise = supabase.functions.invoke('ai-chat', { body: { message } })
+    const { data, error } = await Promise.race([invokePromise, timeoutPromise])
+    if (error) return null
+    return data?.reply || null
   } catch { return null }
 }
 
@@ -99,8 +132,13 @@ export async function sendAiMessage(
   provider: AiProvider = 'openai'
 ): Promise<{ reply: string; provider: string }> {
   if (provider === 'openai') {
-    const reply = await callOpenAI(message)
-    if (reply) return { reply, provider: 'gpt-4o' }
+    // Try direct OpenAI first (fastest, 15s timeout)
+    const directReply = await callOpenAI(message)
+    if (directReply) return { reply: directReply, provider: 'gpt-4o' }
+
+    // Fallback: Supabase Edge Function (5s timeout)
+    const edgeReply = await callSupabaseEdge(message)
+    if (edgeReply) return { reply: edgeReply, provider: 'gpt-4o' }
   }
   if (provider === 'moonshot') {
     const reply = await callMoonshot(message)
@@ -128,20 +166,20 @@ export async function submitRunPodJob(
   input: Record<string, unknown>
 ): Promise<{ jobId: string; status: string }> {
   if (!RUNPOD_KEY) throw new Error('RunPod key not configured')
-  const res = await fetch(`https://api.runpod.ai/v2/${endpointId}/run`, {
+  const res = await fetchWithTimeout(`https://api.runpod.ai/v2/${endpointId}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RUNPOD_KEY}` },
     body: JSON.stringify({ input }),
-  })
+  }, 30000)
   if (!res.ok) throw new Error(`RunPod ${type} error: ${res.status}`)
   const data = await res.json()
   return { jobId: data.id, status: data.status }
 }
 
 export async function getRunPodStatus(endpointId: string, jobId: string) {
-  const res = await fetch(`https://api.runpod.ai/v2/${endpointId}/status/${jobId}`, {
+  const res = await fetchWithTimeout(`https://api.runpod.ai/v2/${endpointId}/status/${jobId}`, {
     headers: { 'Authorization': `Bearer ${RUNPOD_KEY}` },
-  })
+  }, 10000)
   const data = await res.json()
   return {
     id: jobId,

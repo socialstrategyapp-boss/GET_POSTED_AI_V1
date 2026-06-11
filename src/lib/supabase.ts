@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = 'https://lpmpcprejxmgeuxdhlsj.supabase.co'
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwbXBjcHJlanhtZ2V1eGRobHNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3MTgwMzgsImV4cCI6MjA5NTI5NDAzOH0.MVN8MZ1gQObLRrslzUqth6nyoUNx9_-U6nYHwhOZxDw'
+const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwbXBjcHJlanhtZ2V1eGRobHNqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5OTcxODAzOCwiZXhwIjoyMDk1Mjk0MDM4fQ.4i2YHiGk5GeSmtKseUe47f5QVwWFDdh2n6LD8FoG0J8'
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -9,6 +10,11 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     persistSession: true,
     detectSessionInUrl: true,
   },
+})
+
+// Admin client for storage (bypasses RLS)
+export const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
 })
 
 export type { User, Session } from '@supabase/supabase-js'

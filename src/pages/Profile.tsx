@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
+import { uploadLogo, uploadBusinessPhoto, initStorageBuckets } from '@/lib/storage'
 import {
   Sparkles,
   User,
@@ -98,15 +99,6 @@ function AnimatedNumber({ value, duration = 800 }: { value: number; duration?: n
   }, [value, duration])
 
   return <>{display}</>
-}
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,21 +225,30 @@ function BrandTab() {
     [form, triggerAutoSave]
   )
 
-  /* ---- Logo Upload ---- */
+  // Initialize storage buckets on mount
+  useEffect(() => {
+    initStorageBuckets().catch(() => {})
+  }, [])
+
+  /* ---- Logo Upload to Supabase Storage ---- */
   const handleLogoSelect = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       toast.error('Please upload an image file')
       return
     }
     try {
-      const base64 = await readFileAsBase64(file)
-      setForm((prev) => {
-        const next = { ...prev, logo_url: base64 }
-        triggerAutoSave(next, businessPhotos)
-        return next
-      })
+      toast.loading('Uploading logo...', { id: 'logo-upload' })
+      const url = await uploadLogo(file)
+      toast.success('Logo uploaded!', { id: 'logo-upload' })
+      if (url) {
+        setForm((prev) => {
+          const next = { ...prev, logo_url: url }
+          triggerAutoSave(next, businessPhotos)
+          return next
+        })
+      }
     } catch {
-      toast.error('Failed to read image')
+      toast.error('Failed to upload logo', { id: 'logo-upload' })
     }
   }
 
@@ -258,18 +259,22 @@ function BrandTab() {
     if (file) handleLogoSelect(file)
   }
 
-  /* ---- Business Photos Upload ---- */
+  /* ---- Business Photos Upload to Supabase Storage ---- */
   const handlePhotoSelect = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       toast.error('Please upload an image file')
       return
     }
     try {
-      const base64 = await readFileAsBase64(file)
-      const nextPhotos = [...businessPhotos, base64]
-      updatePhotos(nextPhotos)
+      toast.loading(`Uploading ${file.name}...`, { id: 'photo-upload' })
+      const url = await uploadBusinessPhoto(file)
+      toast.success('Photo uploaded!', { id: 'photo-upload' })
+      if (url) {
+        const nextPhotos = [...businessPhotos, url]
+        updatePhotos(nextPhotos)
+      }
     } catch {
-      toast.error('Failed to read image')
+      toast.error('Failed to upload photo', { id: 'photo-upload' })
     }
   }
 

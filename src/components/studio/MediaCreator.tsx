@@ -23,9 +23,16 @@ export default function MediaCreator() {
   const [jobResult, setJobResult] = useState<JobResult | null>(null)
   const [statusMsg, setStatusMsg] = useState('')
 
+  // Endpoint IDs — pre-loaded with user's actual RunPod endpoints
+  const DEFAULT_ENDPOINTS: Record<string, string> = {
+    runpod_video_endpoint: 'rvmkklhpi187v1',
+    runpod_image_endpoint: '0x076ohyigamq5',
+    runpod_voice_endpoint: localStorage.getItem('runpod_voice_endpoint') || '',
+  }
   const [endpoints, setEndpoints] = useState<Record<string, string>>(() => {
     const saved = localStorage.getItem('runpod_endpoints')
-    return saved ? JSON.parse(saved) : {}
+    const parsed = saved ? JSON.parse(saved) : {}
+    return { ...DEFAULT_ENDPOINTS, ...parsed }
   })
   const [showSetup, setShowSetup] = useState(false)
 
